@@ -45,12 +45,3 @@ jobs:
           done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Chat
-        uses: SimonScholz/google-chat-action@main
-        with:
-          title: Deploy ${{ github.event.repository.name }}
-          subtitle: ${{ github.event.head_commit.message }}
-          webhookUrl: ${{ secrets.GOOGLE_CHAT_TECHNOLOGY_TEAM_WEBHOOK }}
-          jobStatus: ${{ job.status }}
-        if: always()
