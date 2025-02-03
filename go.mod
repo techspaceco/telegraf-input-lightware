@@ -3,6 +3,11 @@ module github.com/techspaceco/telegraf-input-lightware
 go 1.23.0
 
 require (
+	github.com/influxdata/telegraf v1.33.0
+	github.com/segmentio/go-snakecase v1.2.0
+)
+
+require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/BurntSushi/toml v1.4.0 // indirect
 	github.com/alecthomas/participle v0.4.1 // indirect
@@ -18,8 +23,6 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
 	github.com/google/cel-go v0.21.0 // indirect
 	github.com/gosnmp/gosnmp v1.38.0 // indirect
-	github.com/iancoleman/strcase v0.3.0 // indirect
-	github.com/influxdata/telegraf v1.33.0 // indirect
 	github.com/influxdata/toml v0.0.0-20190415235208-270119a8ce65 // indirect
 	github.com/klauspost/compress v1.17.10 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect

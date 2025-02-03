@@ -8,13 +8,14 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/iancoleman/strcase"
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
+	"github.com/segmentio/go-snakecase"
 )
 
 func init() {
@@ -32,6 +33,8 @@ const (
 	FieldTypeString  FieldType = "string"
 )
 
+const Measurement = "lightware"
+
 //go:embed sample.conf
 var sampleConfig string
 
@@ -41,7 +44,7 @@ type Path struct {
 
 	// Field name to store the value.
 	//
-	// Default: github.com/iancoleman/strcase.ToSnake(path)
+	// Default: snake_case(path)
 	Field string
 
 	// Type of the value.
@@ -59,7 +62,7 @@ type Lightware struct {
 	Urls []string
 
 	// Paths to fetch.
-	Paths []Path
+	Paths []*Path
 
 	// Timeout for HTTP requests in seconds.
 	Timeout float64
@@ -77,12 +80,18 @@ func (l *Lightware) Description() string {
 
 func (l *Lightware) defaults() {
 	if l.Timeout == 0 {
+		// How do we set a sensible default?
+		// I don't think there is any point setting it longer than the poll interval but as far as I can tell, telegraf doesn't expose it to plugins.
 		l.Timeout = 5
 	}
 
-	for i, path := range l.Paths {
+	for _, path := range l.Paths {
 		if path.Field == "" {
-			l.Paths[i].Field = strcase.ToSnake(path.Path)
+			path.Field = snakecase.Snakecase(path.Path)
+		}
+
+		if path.Type == "" {
+			path.Type = "string"
 		}
 	}
 }
@@ -90,22 +99,24 @@ func (l *Lightware) defaults() {
 func (l *Lightware) Gather(acc telegraf.Accumulator) error {
 	l.defaults()
 
-	for _, host := range l.Urls {
+	for _, url := range l.Urls {
 		l.wg.Add(1)
 		go func(host string) {
 			defer l.wg.Done()
-			l.gather(host, acc)
-		}(host)
+			l.gather(url, acc)
+		}(url)
 	}
 	l.wg.Wait()
 
 	return nil
 }
 
-func (l *Lightware) gather(host string, acc telegraf.Accumulator) {
-	u, err := url.Parse(host)
+var boolRE = regexp.MustCompile(`^(?i)(?:true|1|ok|occupied)$`)
+
+func (l *Lightware) gather(lwURL string, acc telegraf.Accumulator) {
+	u, err := url.Parse(lwURL)
 	if err != nil {
-		l.Log.Errorf("lightware parse URL: %s", err)
+		l.Log.Errorf("lightware %q parse URL: %s", lwURL, err)
 		return
 	}
 
@@ -113,66 +124,59 @@ func (l *Lightware) gather(host string, acc telegraf.Accumulator) {
 		"host": u.Hostname(),
 	}
 
-	u.Path = "/ProductName"
+	u.Path = "/api/ProductName"
 	if product, err := get(u); err == nil {
 		tags["product"] = string(product)
 	} else {
-		l.Log.Errorf("lightware product: %s", err)
+		l.Log.Errorf("lightware %q product: %s", u.String(), err)
+		acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
 		return
 	}
 
-	fields := map[string]any{}
-
-	u.Path = "/PackageVersion"
-	if version, err := get(u); err == nil {
-		fields["package_version"] = string(version)
+	u.Path = "/api/V1/MANAGEMENT/UID/MACADDRESS/Main"
+	if mac, err := get(u); err == nil {
+		tags["mac"] = string(mac) // Naming? Ethernet 1 (Main) is generally used for control/management.
 	} else {
-		l.Log.Errorf("lightware version: %s", err)
+		l.Log.Errorf("lightware %q mac: %s", u.String(), err)
+		acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
+		return
+	}
+
+	u.Path = "/api/V1/MANAGEMENT/LABEL/DeviceLabel"
+	if label, err := get(u); err == nil {
+		tags["label"] = string(label)
+	} else {
+		l.Log.Errorf("lightware %q label: %s", u.String(), err)
+		acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
 		return
 	}
 
 	// Should I gather paths concurrently? I don't know how constrained the devices are.
+	fields := map[string]any{
+		"result_code": int64(0),
+	}
+
 	for _, path := range l.Paths {
-		u.Path = filepath.Join(u.Path, path.Path)
+		u.Path = filepath.Join("/api/", path.Path)
 
 		data, err := get(u)
 		if err != nil {
-			l.Log.Errorf("lightware get: %s", err)
-			return
+			l.Log.Errorf("lightware %q get: %s", u.String(), err)
+			fields["result_code"] = int64(1)
+			continue
 		}
 
-		switch FieldType(path.Type) {
-		case FieldTypeInteger:
-			value, err := strconv.ParseInt(string(data), 10, 64)
-			if err != nil {
-				l.Log.Errorf("lightware parse integer: %s", err)
-				return
-			}
-			fields[path.Path] = value
-		case FieldTypeFloat:
-			value, err := strconv.ParseFloat(string(data), 64)
-			if err != nil {
-				l.Log.Errorf("lightware parse float: %s", err)
-				return
-			}
-			fields[path.Path] = value
-		case FieldTypeBoolean:
-			value, err := strconv.ParseBool(string(data))
-			if err != nil {
-				l.Log.Errorf("lightware parse boolean: %s", err)
-				return
-			}
-			fields[path.Path] = value
-		case FieldTypeString:
-			fields[path.Path] = string(data)
-		default:
-			l.Log.Errorf("lightware unknown type: %s", path.Type)
-			return
+		value, err := parse(string(data), FieldType(path.Type))
+		if err != nil {
+			l.Log.Errorf("lightware %q parse %s: %s", u.String(), path.Type, err)
+			fields["result_code"] = int64(1)
+			continue
 		}
 
+		fields[path.Field] = value
 	}
 
-	acc.AddFields("lightware", fields, tags)
+	acc.AddFields(Measurement, fields, tags)
 }
 
 var client = &http.Client{
@@ -209,4 +213,19 @@ func get(u *url.URL) ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+func parse(s string, ft FieldType) (any, error) {
+	switch ft {
+	case FieldTypeInteger:
+		return strconv.ParseInt(s, 10, 64)
+	case FieldTypeFloat:
+		return strconv.ParseFloat(s, 64)
+	case FieldTypeBoolean:
+		return boolRE.MatchString(s), nil
+	case FieldTypeString:
+		return s, nil
+	default:
+		return nil, fmt.Errorf("unknown type: %s", ft)
+	}
 }

@@ -1,1 +1,5 @@
-telegraf-input-lightware
+# Junk
+.vscode
+
+/telegraf-input-lightware*
+dist/

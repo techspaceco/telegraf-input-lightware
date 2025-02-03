@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          check-latest: true
+
+      - name: Build
+        run: |
+          make dist
+
+      - name:
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: |
+            dist
+
+      - name: Chat
+        uses: SimonScholz/google-chat-action@main
+        with:
+          title: Deploy ${{ github.event.repository.name }}
+          subtitle: ${{ github.event.head_commit.message }}
+          webhookUrl: ${{ secrets.GOOGLE_CHAT_TECHNOLOGY_TEAM_WEBHOOK }}
+          jobStatus: ${{ job.status }}
+        if: always()
