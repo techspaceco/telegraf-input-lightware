@@ -24,16 +24,27 @@ jobs:
           go-version-file: "go.mod"
           check-latest: true
 
-      - name: Build
+      - name: Make
         run: |
           make dist
 
-      - name:
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
         with:
-          name: dist
-          path: |
-            dist
+          tag_name: latest
+          name: "Latest Release"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+      - name: Upload Binaries
+        run: |
+          for file in dist/*; do
+            gh release upload latest "$file" --clobber
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Chat
         uses: SimonScholz/google-chat-action@main
