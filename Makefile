@@ -4,8 +4,8 @@ all:
 
 dist: clean
 	mkdir -p dist
-	GOOS=linux GOARCH=amd64 go build -o dist/telegraf-input-lightware-linux-amd64
-	GOOS=darwin GOARCH=arm64 go build -o dist/telegraf-input-lightware-darwin-arm64
+	GOOS=linux GOARCH=amd64 go build -trimpath -o dist/telegraf-input-lightware-linux-amd64
+	GOOS=darwin GOARCH=arm64 go build -trimpath -o dist/telegraf-input-lightware-darwin-arm64
 
 clean:
 	rm -rf dist/
