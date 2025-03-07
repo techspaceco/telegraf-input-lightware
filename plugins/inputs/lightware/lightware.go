@@ -38,6 +38,14 @@ const Measurement = "lightware"
 //go:embed sample.conf
 var sampleConfig string
 
+type Device struct {
+	// URL of the device to query.
+	Url string `toml:"url"`
+
+	// Tags to add to the metrics.
+	Tags map[string]string `toml:"tags"`
+}
+
 type Path struct {
 	// Path to the value.
 	Path string
@@ -58,14 +66,14 @@ type Path struct {
 type Lightware struct {
 	wg sync.WaitGroup
 
-	// Urls to fetch from.
-	Urls []string
+	// Devices to query.
+	Devices []Device `toml:"devices"`
 
 	// Paths to fetch.
-	Paths []*Path
+	Paths []*Path `toml:"paths"`
 
 	// Timeout for HTTP requests in seconds.
-	Timeout float64
+	Timeout float64 `toml:"timeout"`
 
 	Log telegraf.Logger `toml:"-"`
 }
@@ -99,12 +107,12 @@ func (l *Lightware) defaults() {
 func (l *Lightware) Gather(acc telegraf.Accumulator) error {
 	l.defaults()
 
-	for _, url := range l.Urls {
+	for _, device := range l.Devices {
 		l.wg.Add(1)
-		go func(host string) {
+		go func(device Device) {
 			defer l.wg.Done()
-			l.gather(url, acc)
-		}(url)
+			l.gather(device, acc)
+		}(device)
 	}
 	l.wg.Wait()
 
@@ -113,42 +121,51 @@ func (l *Lightware) Gather(acc telegraf.Accumulator) error {
 
 var boolRE = regexp.MustCompile(`^(?i)(?:true|1|ok|occupied)$`)
 
-func (l *Lightware) gather(lwURL string, acc telegraf.Accumulator) {
-	u, err := url.Parse(lwURL)
+func (l *Lightware) gather(device Device, acc telegraf.Accumulator) {
+	u, err := url.Parse(device.Url)
 	if err != nil {
-		l.Log.Errorf("lightware %q parse URL: %s", lwURL, err)
+		l.Log.Errorf("lightware %q parse URL: %s", device.Url, err)
 		return
 	}
 
 	tags := map[string]string{
 		"host": u.Hostname(),
 	}
-
-	u.Path = "/api/ProductName"
-	if product, err := get(u); err == nil {
-		tags["product"] = string(product)
-	} else {
-		l.Log.Errorf("lightware %q product: %s", u.String(), err)
-		acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
-		return
+	for k, v := range device.Tags {
+		tags[k] = v
 	}
 
-	u.Path = "/api/V1/MANAGEMENT/UID/MACADDRESS/Main"
-	if mac, err := get(u); err == nil {
-		tags["mac"] = string(mac) // Naming? Ethernet 1 (Main) is generally used for control/management.
-	} else {
-		l.Log.Errorf("lightware %q mac: %s", u.String(), err)
-		acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
-		return
+	if _, ok := tags["product"]; !ok {
+		u.Path = "/api/ProductName"
+		if product, err := get(u); err == nil {
+			tags["product"] = string(product)
+		} else {
+			l.Log.Errorf("lightware %q product: %s", u.String(), err)
+			acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
+			return
+		}
 	}
 
-	u.Path = "/api/V1/MANAGEMENT/LABEL/DeviceLabel"
-	if label, err := get(u); err == nil {
-		tags["label"] = string(label)
-	} else {
-		l.Log.Errorf("lightware %q label: %s", u.String(), err)
-		acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
-		return
+	if _, ok := tags["mac"]; !ok {
+		u.Path = "/api/V1/MANAGEMENT/UID/MACADDRESS/Main"
+		if mac, err := get(u); err == nil {
+			tags["mac"] = string(mac) // Naming? Ethernet 1 (Main) is generally used for control/management.
+		} else {
+			l.Log.Errorf("lightware %q mac: %s", u.String(), err)
+			acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
+			return
+		}
+	}
+
+	if _, ok := tags["label"]; !ok {
+		u.Path = "/api/V1/MANAGEMENT/LABEL/DeviceLabel"
+		if label, err := get(u); err == nil {
+			tags["label"] = string(label)
+		} else {
+			l.Log.Errorf("lightware %q label: %s", u.String(), err)
+			acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
+			return
+		}
 	}
 
 	// Should I gather paths concurrently? I don't know how constrained the devices are.
