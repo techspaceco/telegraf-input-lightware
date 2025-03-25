@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -174,12 +175,17 @@ func (l *Lightware) gather(device Device, acc telegraf.Accumulator) {
 	}
 
 	for _, path := range l.Paths {
-		u.Path = filepath.Join("/api/", path.Path)
+		// Ensure both /api/V1/... and /V1/... paths work as it's not obvious you need
+		// to include /api/ in the URL if you are looking at the 'AVDANCED' view on
+		// the device.
+		u.Path = filepath.Join("/api/", strings.TrimPrefix(path.Path, "/api"))
 
 		data, err := get(u)
 		if err != nil {
 			l.Log.Errorf("lightware %q get: %s", u.String(), err)
-			fields["result_code"] = int64(1)
+			// Some paths are only available on certain models so ignore fetching errors
+			// in the result_code and just log them.
+			// fields["result_code"] = int64(1)
 			continue
 		}
 
