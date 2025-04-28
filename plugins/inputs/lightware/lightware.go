@@ -158,6 +158,39 @@ func (l *Lightware) gather(device Device, acc telegraf.Accumulator) {
 		}
 	}
 
+	if _, ok := tags["hw_version"]; !ok {
+		u.Path = "/api/V1/MANAGEMENT/UID/HwVersion"
+		if label, err := get(u); err == nil {
+			tags["hw_version"] = string(label)
+		} else {
+			l.Log.Errorf("lightware %q hw_version: %s", u.String(), err)
+			acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
+			return
+		}
+	}
+
+	if _, ok := tags["serial_number"]; !ok {
+		u.Path = "/api/V1/MANAGEMENT/UID/SerialNumber"
+		if label, err := get(u); err == nil {
+			tags["serial_number"] = string(label)
+		} else {
+			l.Log.Errorf("lightware %q serial_number: %s", u.String(), err)
+			acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
+			return
+		}
+	}
+
+	if _, ok := tags["part_number"]; !ok {
+		u.Path = "/api/V1/MANAGEMENT/UID/PartNumber"
+		if label, err := get(u); err == nil {
+			tags["part_number"] = string(label)
+		} else {
+			l.Log.Errorf("lightware %q part_number: %s", u.String(), err)
+			acc.AddFields(Measurement, map[string]any{"result_code": int64(1)}, tags)
+			return
+		}
+	}
+
 	if _, ok := tags["label"]; !ok {
 		u.Path = "/api/V1/MANAGEMENT/LABEL/DeviceLabel"
 		if label, err := get(u); err == nil {
